@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>จำลองการส่งข้อมูลระหว่าง PLC (Modbus Simulator)</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel2: #273449;
+    --line: #334155;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #38bdf8;
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --master: #a855f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", Tahoma, "Sarabun", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    padding: 12px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .controls { display: flex; gap: 10px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+  button {
+    background: var(--accent);
+    color: #06283d;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button.secondary { background: var(--panel2); color: var(--text); border: 1px solid var(--line); }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  label.ctl { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  input[type=range] { width: 120px; }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage {
+    flex: 1;
+    position: relative;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(56,189,248,0.08), transparent 60%),
+      var(--bg);
+  }
+  svg { width: 100%; height: 100%; display: block; }
+  .sidebar {
+    width: 340px;
+    background: var(--panel);
+    border-left: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .sidebar h2 { font-size: 14px; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line); color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  #log { flex: 1; overflow-y: auto; padding: 8px 12px; font-family: Consolas, monospace; font-size: 12px; }
+  .logline { padding: 3px 0; border-bottom: 1px solid rgba(255,255,255,0.04); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .logline .t { color: var(--muted); }
+  .logline.req .dir { color: var(--accent); }
+  .logline.res .dir { color: var(--green); }
+  .logline.err .dir { color: var(--red); }
+  .node-card { fill: var(--panel); stroke: var(--line); stroke-width: 1.5; }
+  .node-title { fill: var(--text); font-size: 13px; font-weight: 600; }
+  .node-sub { fill: var(--muted); font-size: 10px; }
+  .reg { fill: var(--muted); font-size: 11px; font-family: Consolas, monospace; }
+  .reg-val { fill: var(--text); font-size: 11px; font-family: Consolas, monospace; font-weight: 600; }
+  .link { stroke: var(--line); stroke-width: 2; }
+  .legend { padding: 10px 16px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; margin-right: 14px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .status-pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: var(--panel2); color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>🔌 จำลองการส่งข้อมูลระหว่าง PLC</h1>
+    <div class="sub">Modbus Master/Slave Network Simulator — สาธิตการโพลและส่งข้อมูลแบบเรียลไทม์</div>
+  </div>
+  <div class="controls">
+    <span class="status-pill" id="statusPill">หยุด</span>
+    <label class="ctl">จำนวน Slave
+      <input type="range" id="slaveCount" min="2" max="6" value="4" />
+      <span id="slaveCountVal">4</span>
+    </label>
+    <label class="ctl">ความเร็ว
+      <input type="range" id="speed" min="1" max="10" value="5" />
+    </label>
+    <button id="startBtn">▶ เริ่ม</button>
+    <button id="stepBtn" class="secondary">⏭ ทีละขั้น</button>
+    <button id="resetBtn" class="secondary">↺ รีเซ็ต</button>
+  </div>
+</header>
+<main>
+  <div id="stage">
+    <svg id="svg" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet"></svg>
+  </div>
+  <div class="sidebar">
+    <h2>บันทึกการสื่อสาร (Communication Log)</h2>
+    <div id="log"></div>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--master)"></span>Master</span>
+      <span><span class="dot" style="background:var(--green)"></span>Slave ปกติ</span>
+      <span><span class="dot" style="background:var(--accent)"></span>Request</span>
+      <span><span class="dot" style="background:var(--amber)"></span>Response</span>
+    </div>
+  </div>
+</main>
+
+<script>
+const SVG_NS = "http://www.w3.org/2000/svg";
+const svg = document.getElementById("svg");
+const logEl = document.getElementById("log");
+const statusPill = document.getElementById("statusPill");
+
+const FUNCS = [
+  { code: 3, name: "Read Holding Reg" },
+  { code: 6, name: "Write Single Reg" },
+  { code: 1, name: "Read Coils" },
+];
+
+let state = {
+  running: false,
+  speed: 5,
+  slaveCount: 4,
+  master: null,
+  slaves: [],
+  currentTarget: 0,
+  packet: null,        // animation packet
+  phase: "idle",       // idle | request | response
+  timer: 0,
+  tickAccum: 0,
+  txn: 0,
+};
+
+// ---------- Layout ----------
+function buildNetwork() {
+  state.master = makePLC("MASTER", true);
+  state.slaves = [];
+  for (let i = 0; i < state.slaveCount; i++) {
+    state.slaves.push(makePLC("PLC-" + (i + 1), false, i + 1));
+  }
+  state.currentTarget = 0;
+  state.packet = null;
+  state.phase = "idle";
+  state.txn = 0;
+  render();
+}
+
+function makePLC(name, isMaster, addr) {
+  return {
+    name, isMaster, addr: addr || 0,
+    online: true,
+    regs: Array.from({ length: 4 }, (_, i) => Math.floor(Math.random() * 100)),
+    coils: Array.from({ length: 4 }, () => Math.random() > 0.5 ? 1 : 0),
+    lastActive: false,
+  };
+}
+
+function nodePositions() {
+  // master at top-center, slaves along a horizontal bus below
+  const pos = {};
+  pos.master = { x: 500, y: 110 };
+  const n = state.slaves.length;
+  const margin = 120, span = 1000 - margin * 2;
+  const busY = 420;
+  state.slaves.forEach((s, i) => {
+    const x = n === 1 ? 500 : margin + (span * i) / (n - 1);
+    pos["slave" + i] = { x, y: busY };
+  });
+  pos.busY = busY;
+  return pos;
+}
+
+// ---------- Render ----------
+function render() {
+  const pos = nodePositions();
+  svg.innerHTML = "";
+
+  // bus line
+  const busY = pos.busY;
+  line(120, busY, 880, busY, "link");
+  // drop from master to bus
+  line(pos.master.x, pos.master.y + 70, pos.master.x, busY, "link");
+  // drops from bus to each slave
+  state.slaves.forEach((s, i) => {
+    const p = pos["slave" + i];
+    line(p.x, busY, p.x, p.y, "link");
+  });
+
+  // nodes
+  drawNode(pos.master, state.master);
+  state.slaves.forEach((s, i) => drawNode(pos["slave" + i], s));
+
+  // packet
+  if (state.packet) drawPacket(state.packet);
+}
+
+function line(x1, y1, x2, y2, cls) {
+  const l = document.createElementNS(SVG_NS, "line");
+  l.setAttribute("x1", x1); l.setAttribute("y1", y1);
+  l.setAttribute("x2", x2); l.setAttribute("y2", y2);
+  l.setAttribute("class", cls);
+  svg.appendChild(l);
+}
+
+function drawNode(p, plc) {
+  const w = 150, h = 140;
+  const x = p.x - w / 2, y = p.y - 70;
+  const g = document.createElementNS(SVG_NS, "g");
+
+  const rect = document.createElementNS(SVG_NS, "rect");
+  rect.setAttribute("x", x); rect.setAttribute("y", y);
+  rect.setAttribute("width", w); rect.setAttribute("height", h);
+  rect.setAttribute("rx", 12); rect.setAttribute("class", "node-card");
+  const color = plc.isMaster ? "#a855f7" : (plc.online ? "#22c55e" : "#ef4444");
+  rect.setAttribute("stroke", plc.lastActive ? "#38bdf8" : color);
+  rect.setAttribute("stroke-width", plc.lastActive ? 3 : 1.5);
+  if (plc.lastActive) rect.setAttribute("fill", "#273449");
+  g.appendChild(rect);
+
+  // status LED
+  const led = document.createElementNS(SVG_NS, "circle");
+  led.setAttribute("cx", x + w - 16); led.setAttribute("cy", y + 16);
+  led.setAttribute("r", 6); led.setAttribute("fill", color);
+  g.appendChild(led);
+
+  text(g, x + 14, y + 22, plc.name, "node-title");
+  text(g, x + 14, y + 38, plc.isMaster ? "Modbus Master" : "Slave  addr " + plc.addr, "node-sub");
+
+  // registers
+  plc.regs.forEach((v, i) => {
+    const ry = y + 60 + i * 18;
+    text(g, x + 14, ry, "R" + i, "reg");
+    text(g, x + w - 14, ry, String(v).padStart(4, " "), "reg-val", "end");
+  });
+
+  svg.appendChild(g);
+}
+
+function text(parent, x, y, str, cls, anchor) {
+  const t = document.createElementNS(SVG_NS, "text");
+  t.setAttribute("x", x); t.setAttribute("y", y);
+  t.setAttribute("class", cls);
+  if (anchor) t.setAttribute("text-anchor", anchor);
+  t.textContent = str;
+  parent.appendChild(t);
+}
+
+function drawPacket(pk) {
+  const g = document.createElementNS(SVG_NS, "g");
+  const c = document.createElementNS(SVG_NS, "rect");
+  c.setAttribute("x", pk.x - 26); c.setAttribute("y", pk.y - 12);
+  c.setAttribute("width", 52); c.setAttribute("height", 24);
+  c.setAttribute("rx", 6);
+  c.setAttribute("fill", pk.kind === "req" ? "#38bdf8" : "#f59e0b");
+  g.appendChild(c);
+  const t = document.createElementNS(SVG_NS, "text");
+  t.setAttribute("x", pk.x); t.setAttribute("y", pk.y + 4);
+  t.setAttribute("text-anchor", "middle");
+  t.setAttribute("font-size", "11");
+  t.setAttribute("font-weight", "700");
+  t.setAttribute("fill", "#06283d");
+  t.textContent = pk.label;
+  g.appendChild(t);
+  svg.appendChild(g);
+}
+
+// ---------- Simulation ----------
+function startTransaction() {
+  const pos = nodePositions();
+  const idx = state.currentTarget;
+  const slave = state.slaves[idx];
+  const fn = FUNCS[Math.floor(Math.random() * FUNCS.length)];
+  // 10% chance slave is offline -> timeout
+  slave.online = Math.random() > 0.1;
+
+  state.txn++;
+  const data = {};
+  if (fn.code === 6) { data.reg = Math.floor(Math.random() * 4); data.val = Math.floor(Math.random() * 100); }
+  else { data.reg = 0; data.count = 4; }
+
+  state.activeTxn = { idx, slave, fn, data };
+  state.master.lastActive = true;
+  slave.lastActive = true;
+
+  // build packet path: master -> bus -> slave
+  const start = { x: pos.master.x, y: pos.master.y + 70 };
+  const end = { x: pos["slave" + idx].x, y: pos["slave" + idx].y - 70 };
+  const via = { x: pos["slave" + idx].x, y: pos.busY };
+  state.packet = {
+    kind: "req",
+    label: "FC" + fn.code,
+    path: [start, { x: pos.master.x, y: pos.busY }, via, end],
+    seg: 0, t: 0,
+    x: start.x, y: start.y,
+  };
+  state.phase = "request";
+  addLog("req", `[${ts()}] → Master ส่ง ${fn.name} (FC${fn.code}) ไปยัง ${slave.name}` +
+    (fn.code === 6 ? ` : เขียน R${data.reg}=${data.val}` : ` : อ่าน ${data.count} reg`));
+  render();
+}
+
+function finishRequest() {
+  const { slave, fn, data } = state.activeTxn;
+  const pos = nodePositions();
+  if (!slave.online) {
+    addLog("err", `[${ts()}] ✕ ${slave.name} ไม่ตอบสนอง (TIMEOUT)`);
+    state.phase = "idle";
+    state.packet = null;
+    clearActive();
+    nextTarget();
+    render();
+    return;
+  }
+  // slave processes
+  let respLabel = "ACK";
+  if (fn.code === 6) {
+    slave.regs[data.reg] = data.val;
+    respLabel = "OK";
+  } else if (fn.code === 3) {
+    slave.regs = slave.regs.map(() => Math.floor(Math.random() * 100));
+    respLabel = "DATA";
+  } else if (fn.code === 1) {
+    slave.coils = slave.coils.map(() => Math.random() > 0.5 ? 1 : 0);
+    respLabel = "BITS";
+  }
+  // response packet: slave -> bus -> master
+  const idx = state.activeTxn.idx;
+  const start = { x: pos["slave" + idx].x, y: pos["slave" + idx].y - 70 };
+  const end = { x: pos.master.x, y: pos.master.y + 70 };
+  state.packet = {
+    kind: "res",
+    label: respLabel,
+    path: [start, { x: pos["slave" + idx].x, y: pos.busY }, { x: pos.master.x, y: pos.busY }, end],
+    seg: 0, t: 0,
+    x: start.x, y: start.y,
+  };
+  state.phase = "response";
+  const detail = fn.code === 3 ? ` [${slave.regs.join(",")}]` :
+                 fn.code === 1 ? ` [${slave.coils.join("")}]` :
+                 ` (R${data.reg}=${data.val})`;
+  addLog("res", `[${ts()}] ← ${slave.name} ตอบกลับ ${respLabel}${detail}`);
+}
+
+function finishResponse() {
+  state.phase = "idle";
+  state.packet = null;
+  clearActive();
+  nextTarget();
+  render();
+}
+
+function clearActive() {
+  state.master.lastActive = false;
+  state.slaves.forEach(s => s.lastActive = false);
+}
+
+function nextTarget() {
+  state.currentTarget = (state.currentTarget + 1) % state.slaves.length;
+}
+
+// move packet along its multi-segment path
+function advancePacket(dt) {
+  const pk = state.packet;
+  if (!pk) return false;
+  const speedPxPerSec = 120 + state.speed * 90;
+  let remaining = speedPxPerSec * dt;
+  while (remaining > 0 && pk.seg < pk.path.length - 1) {
+    const a = pk.path[pk.seg], b = pk.path[pk.seg + 1];
+    const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+    const distLeft = segLen * (1 - pk.t);
+    if (remaining >= distLeft) {
+      remaining -= distLeft;
+      pk.seg++;
+      pk.t = 0;
+    } else {
+      pk.t += remaining / segLen;
+      remaining = 0;
+    }
+  }
+  const seg = Math.min(pk.seg, pk.path.length - 2);
+  const a = pk.path[seg], b = pk.path[seg + 1];
+  pk.x = a.x + (b.x - a.x) * pk.t;
+  pk.y = a.y + (b.y - a.y) * pk.t;
+  return pk.seg >= pk.path.length - 1;
+}
+
+let lastTime = 0;
+function loop(now) {
+  if (!state.running) return;
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+
+  if (state.phase === "idle") {
+    state.tickAccum += dt;
+    const interval = 1.2 - state.speed * 0.1;
+    if (state.tickAccum >= interval) {
+      state.tickAccum = 0;
+      startTransaction();
+    }
+  } else if (state.phase === "request") {
+    if (advancePacket(dt)) finishRequest();
+    render();
+  } else if (state.phase === "response") {
+    if (advancePacket(dt)) finishResponse();
+    render();
+  }
+  requestAnimationFrame(loop);
+}
+
+function singleStep() {
+  if (state.phase === "idle") {
+    startTransaction();
+    runStepUntilPhase("request");
+  }
+}
+function runStepUntilPhase(target) {
+  // animate one full request+response without continuous mode
+  const wasRunning = state.running;
+  state.running = true;
+  lastTime = performance.now();
+  const orig = state.phase;
+  function stepLoop(now) {
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    if (state.phase === "request") { if (advancePacket(dt)) finishRequest(); render(); }
+    else if (state.phase === "response") { if (advancePacket(dt)) finishResponse(); render(); }
+    if (state.phase !== "idle") requestAnimationFrame(stepLoop);
+    else { state.running = wasRunning; if (wasRunning) { lastTime = performance.now(); requestAnimationFrame(loop);} }
+  }
+  requestAnimationFrame(stepLoop);
+}
+
+// ---------- Log ----------
+function ts() {
+  const d = new Date();
+  return d.toLocaleTimeString("th-TH", { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
+}
+function addLog(cls, msg) {
+  const div = document.createElement("div");
+  div.className = "logline " + cls;
+  div.innerHTML = `<span class="dir">${msg}</span>`;
+  logEl.insertBefore(div, logEl.firstChild);
+  while (logEl.children.length > 200) logEl.removeChild(logEl.lastChild);
+}
+
+// ---------- Controls ----------
+const startBtn = document.getElementById("startBtn");
+startBtn.onclick = () => {
+  state.running = !state.running;
+  if (state.running) {
+    startBtn.textContent = "⏸ หยุดชั่วคราว";
+    statusPill.textContent = "กำลังทำงาน";
+    statusPill.style.color = "#22c55e";
+    lastTime = performance.now();
+    requestAnimationFrame(loop);
+  } else {
+    startBtn.textContent = "▶ เริ่ม";
+    statusPill.textContent = "หยุดชั่วคราว";
+    statusPill.style.color = "#f59e0b";
+  }
+};
+document.getElementById("stepBtn").onclick = () => { if (!state.running) singleStep(); };
+document.getElementById("resetBtn").onclick = () => {
+  state.running = false;
+  startBtn.textContent = "▶ เริ่ม";
+  statusPill.textContent = "หยุด";
+  statusPill.style.color = "";
+  logEl.innerHTML = "";
+  buildNetwork();
+};
+const speedEl = document.getElementById("speed");
+speedEl.oninput = () => { state.speed = +speedEl.value; };
+const slaveEl = document.getElementById("slaveCount");
+const slaveValEl = document.getElementById("slaveCountVal");
+slaveEl.oninput = () => {
+  slaveValEl.textContent = slaveEl.value;
+  state.slaveCount = +slaveEl.value;
+  const wasRunning = state.running;
+  state.running = false;
+  buildNetwork();
+  if (wasRunning) { state.running = true; lastTime = performance.now(); requestAnimationFrame(loop); }
+};
+
+window.addEventListener("resize", render);
+buildNetwork();
+addLog("res", `[${ts()}] ระบบพร้อม — กดปุ่ม "เริ่ม" เพื่อเริ่มการจำลอง`);
+</script>
+</body>
+</html>

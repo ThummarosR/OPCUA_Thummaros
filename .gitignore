@@ -1,0 +1,28 @@
+# Ignore old subfolders you mentioned
+Factoryio/
+MachineExpertBasicV1_3/
+randomfiles/
+
+# Editor & OS
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Misc
+.claude/
+*.bak
+*.rec
+
+# Node
+node_modules/
+
+# Logs
+*.log
