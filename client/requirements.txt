@@ -1,0 +1,4 @@
+paho-mqtt
+streamlit
+streamlit-autorefresh
+pandas
